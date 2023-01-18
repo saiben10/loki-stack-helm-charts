@@ -5,8 +5,6 @@ test_pod:
 loki:
   enabled: true
   isDefault: true
-  service: 
-    port: 3100
   url: http://{{(include "loki.serviceName" .)}}:{{ .Values.loki.service.port }}
   readinessProbe:
     httpGet:
@@ -21,6 +19,81 @@ loki:
   datasource:
     jsonData: {}
     uid: ""
+
+
+  ## Pod Annotations
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "http-metrics"
+
+  podManagementPolicy: OrderedReady
+
+  rbac:
+    create: true
+    pspEnabled: true
+
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http-metrics
+    initialDelaySeconds: 45
+
+  replicas: 1
+
+  resources: {}
+  securityContext:
+    fsGroup: 10001
+    runAsGroup: 10001
+    runAsNonRoot: true
+    runAsUser: 10001
+
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+
+  serviceAccount:
+    create: true
+    name:
+    annotations: {}
+    automountServiceAccountToken: true
+
+  terminationGracePeriodSeconds: 4800
+
+  ## Tolerations for pod assignment
+  ## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+  tolerations: []
+
+  ## Topology spread constraint for multi-zone clusters
+  ## ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/
+  topologySpreadConstraints:
+    enabled: false
+
+  podDisruptionBudget: {}
+  updateStrategy:
+    type: RollingUpdate
+
+  serviceMonitor:
+    enabled: false
+    interval: ""
+    additionalLabels: {}
+    annotations: {}
+    # scrapeTimeout: 10s
+    # path: /metrics
+    prometheusRule:
+      enabled: false
+      additionalLabels: {}
+    #  namespace:
+      rules: []
+  initContainers: []
+  extraContainers: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  extraPorts: []
+  env: []
+  alerting_groups: []
+  useExistingAlertingGroup:
+    enabled: false
+    configmapName: ""
 
 
 promtail:
@@ -38,12 +111,48 @@ grafana:
   enabled: true
   sidecar:
     datasources:
-      label: ""
-      labelValue: ""
       enabled: true
       maxLines: 1000
   image:
     tag: 8.3.5
+    dashboardProviders: 
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: 'default'
+            orgId: 1
+            folder: ''
+            type: file
+            disableDeletion: false
+            editable: true
+            options:
+              path: /var/lib/grafana/dashboards/default
+
+  dashboardsConfigMaps:
+    default: "grafana-dashboards"
+      
+
+
+  grafana.ini:
+  # paths:
+  #   data: /var/lib/grafana/
+  #   logs: /var/log/grafana
+  #   plugins: /var/lib/grafana/plugins
+  #   provisioning: /etc/grafana/provisioning
+  # analytics:
+  #   check_for_updates: false
+  # log:
+  #   mode: console
+  # grafana_net:
+  #   url: https://grafana.net
+  # server:
+  #   domain: "{{ if (and .Values.ingress.enabled .Values.ingress.hosts) }}{{ .Values.ingress.hosts | first }}{{ end }}"
+    auth.ldap:
+      enabled: true
+      allow_sign_up: true
+      config_file: /etc/grafana/ldap.toml
+
+
 
 prometheus:
   enabled: false
@@ -52,61 +161,3 @@ prometheus:
   datasource:
     jsonData: {}
 
-filebeat:
-  enabled: false
-  filebeatConfig:
-    filebeat.yml: |
-      # logging.level: debug
-      filebeat.inputs:
-      - type: container
-        paths:
-          - /var/log/containers/*.log
-        processors:
-        - add_kubernetes_metadata:
-            host: ${NODE_NAME}
-            matchers:
-            - logs_path:
-                logs_path: "/var/log/containers/"
-      output.logstash:
-        hosts: ["logstash-loki:5044"]
-
-logstash:
-  enabled: false
-  image: grafana/logstash-output-loki
-  imageTag: 1.0.1
-  filters:
-    main: |-
-      filter {
-        if [kubernetes] {
-          mutate {
-            add_field => {
-              "container_name" => "%{[kubernetes][container][name]}"
-              "namespace" => "%{[kubernetes][namespace]}"
-              "pod" => "%{[kubernetes][pod][name]}"
-            }
-            replace => { "host" => "%{[kubernetes][node][name]}"}
-          }
-        }
-        mutate {
-          remove_field => ["tags"]
-        }
-      }
-  outputs:
-    main: |-
-      output {
-        loki {
-          url => "http://loki:3100/loki/api/v1/push"
-          #username => "test"
-          #password => "test"
-        }
-        # stdout { codec => rubydebug }
-      }
-
-# proxy is currently only used by loki test pod
-# Note: If http_proxy/https_proxy are set, then no_proxy should include the
-# loki service name, so that tests are able to communicate with the loki
-# service.
-proxy:
-  http_proxy: ""
-  https_proxy: ""
-  no_proxy: ""
